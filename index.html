@@ -1,12 +1,10 @@
 <center>
     <div
-        style="
-            background-color: lightblue;
+        style="background-color: lightblue;
             padding: 20px;
             border: 5px solid red;
             font-family: Arial, Helvetica, sans-serif;
-            font-size: 50px;
-        ">
+            font-size: 50px;">
         Rice Middle School - ASL Interpreter
     </div>
     <br />
@@ -54,7 +52,7 @@
     /* Make canvas and other elements responsive */
     canvas {
         max-width: 100%;
-        height: auto !important;
+        height: auto;
         display: block;
         margin: 0 auto;
     }
@@ -109,6 +107,7 @@
     let model, webcam, ctx, labelContainer, maxPredictions;
 
     async function init() {
+        alert('init called');
         const modelURL = URL + "model.json";
         const metadataURL = URL + "metadata.json";
 
@@ -232,3 +231,4 @@
         }
     }
 </script>
+
