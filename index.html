@@ -12,28 +12,26 @@
 <style>
     #myParentDiv {
         border: 2px solid blue;
-        padding: 20px;
+        padding: 12px;
         min-height: 14px;
         font-family: Arial;
         color: red;
         display: block;
-        max-width: 400px;
+        max-width: 100%;
         width: 100%;
-        height: 40px;
         align-items: center;
         text-align: center;
     }
     #myNewDiv {
         border: 1px solid green;
-        padding: 20px;
-        font-size: 20px;
+        padding: 12px;
+        font-size: 18px;
         font-family: Arial;
         color: blue;
         display: block;
         margin-top: 5px;
-        max-width: 400px;
+        max-width: 100%;
         width: 100%;
-        height: 80px;
         align-items: center;
         text-align: center;
     }
@@ -86,15 +84,43 @@
             width: calc(100% - 32px);
         }
     }
+
+    /* Table / column alignment helpers */
+    #mainTable td { vertical-align: top; }
+    .right-column .content { width:100%; max-width:640px; margin:0 auto; display:flex; flex-direction:column; align-items:center; gap:12px; }
+    .right-column canvas { width:100%; max-width:640px; height:auto; display:block; }
+    #label-container { width:100%; max-width:640px; box-sizing:border-box; display:block; text-align:center; }
 </style>
-<center><button class="big-button" type="button" onclick="init()" style="background-color: lightblue">Start</button></center>
-<center>
-    <div><canvas id="canvas"></canvas></div>
-</center>
-<center><div id="label-container"></div></center>
-<br />
-<br />
-<center><button class="big-button" type="button" onclick="clearMessage()" style="background-color: yellowgreen">Clear</button></center>
+
+<!-- Two-column layout: controls on the left, camera + labels on the right -->
+<div style="width:100%; display:flex; justify-content:center;">
+    <table id="mainTable" style="border-collapse:collapse; max-width:1000px; width:95%;">
+        <tr>
+            <td style="vertical-align:top; width:340px; padding:16px;">
+                <div style="display:flex; flex-direction:column; gap:16px; align-items:center;">
+                    <button id="startBtn" class="big-button" type="button" onclick="init()" style="background-color: lightblue">Start</button>
+                    <div style="text-align:center; width:100%;">
+                        <!--<label for="cameraSelect" style="font-size:20px; margin-right:8px; display:block; margin-bottom:6px;">Camera:</label> -->
+                        <div style="display:flex; justify-content:center; gap:8px; align-items:center;">
+                            <!-- <select id="cameraSelect" style="font-size:18px; min-width:180px;"></select> -->
+                            <button id="flipBtn" class="big-button" type="button" onclick="flipToNext()" style="background-color: lightcoral;">Flip</button>
+                        </div>
+                    </div>
+                    
+                </div>
+            </td>
+            <td class="right-column" style="vertical-align:top; padding:16px;">
+                <div class="content">
+                    <canvas id="canvas"></canvas>
+                    <div id="label-container"></div>
+                </div>
+                <div style="display:flex; justify-content:center; margin-top:12px;">
+                    <button id="clearBtn" class="big-button" type="button" onclick="clearMessage()" style="background-color: yellowgreen">Clear</button>
+                </div>
+            </td>
+        </tr>
+    </table>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
 <script type="text/javascript">
@@ -105,6 +131,13 @@
     // the link to your model provided by Teachable Machine export panel
     const URL = "./my_model/";
     let model, webcam, ctx, labelContainer, maxPredictions;
+    let availableVideoDevices = [];
+    let currentDeviceId = null;
+    let actualSizeGlobal = null;
+    let flipGlobal = true;
+    // For fallback when tmPose.Webcam.setup with deviceId constraints fails
+    let manualVideo = null;
+    let useManualStream = false;
 
     async function init() {
         //alert ('init');
@@ -134,10 +167,29 @@
         const ratio = window.devicePixelRatio || 1;
         const actualSize = displaySize * ratio; // pixel dimensions used by the webcam
         const flip = true; // whether to flip the webcam
+        // store globals so switching can re-create the webcam
+        actualSizeGlobal = actualSize;
+        flipGlobal = flip;
         webcam = new tmPose.Webcam(actualSize, actualSize, flip); // width, height, flip
-        await webcam.setup(); // request access to the webcam
-        await webcam.play();
-        window.requestAnimationFrame(loop);
+        try {
+            await webcam.setup(); // request access to the webcam (default device)
+            await webcam.play();
+            window.requestAnimationFrame(loop);
+        } catch (e) {
+            alert('Unable to access the camera: ' + e.message);
+            return;
+        }
+
+        // create hidden fallback video element (used for manual getUserMedia fallback)
+        manualVideo = document.createElement('video');
+        manualVideo.autoplay = true;
+        manualVideo.muted = true;
+        manualVideo.playsInline = true;
+        manualVideo.style.display = 'none';
+        document.body.appendChild(manualVideo);
+
+        // populate camera list after permission granted
+        await populateCameraList();
 
         // append/get elements to the DOM
         const canvas = document.getElementById("canvas");
@@ -173,8 +225,115 @@
         //}
     }
 
+    // Populate the camera dropdown with available video input devices
+    async function populateCameraList() {
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            availableVideoDevices = devices.filter(d => d.kind === 'videoinput');
+            const select = document.getElementById('cameraSelect');
+            select.innerHTML = '';
+            availableVideoDevices.forEach((device, idx) => {
+                const option = document.createElement('option');
+                option.value = device.deviceId;
+                // device.label may be empty until permission is granted; provide fallback
+                option.text = device.label || `Camera ${idx + 1}`;
+                select.appendChild(option);
+            });
+
+            // Set selected to current camera if known
+            if (webcam && webcam.webcam && webcam.webcam.srcObject) {
+                // try to determine current deviceId
+                const tracks = webcam.webcam.srcObject.getVideoTracks();
+                if (tracks && tracks[0] && tracks[0].getSettings) {
+                    const settings = tracks[0].getSettings();
+                    if (settings.deviceId) {
+                        currentDeviceId = settings.deviceId;
+                        select.value = currentDeviceId;
+                    }
+                }
+            }
+
+            select.onchange = async (e) => {
+                const id = e.target.value;
+                await switchCamera(id);
+            };
+        } catch (err) {
+            console.warn('Could not list media devices', err);
+        }
+    }
+
+
+    async function switchCamera(deviceId) {
+        if (!deviceId) return;
+        // stop any existing manual stream tracks
+        function stopManualStream() {
+            try {
+                if (manualVideo && manualVideo.srcObject) {
+                    const tracks = manualVideo.srcObject.getTracks();
+                    tracks.forEach(t => t.stop());
+                    manualVideo.srcObject = null;
+                }
+            } catch (e) {}
+        }
+
+        try {
+            // stop current tmPose webcam to release device
+            if (webcam && webcam.stop) {
+                try { webcam.stop(); } catch (e) {}
+            }
+            stopManualStream();
+
+            // try to setup tmPose.Webcam with an exact deviceId constraint
+            webcam = new tmPose.Webcam(actualSizeGlobal, actualSizeGlobal, flipGlobal);
+            try {
+                await webcam.setup({ video: { deviceId: { exact: deviceId } } });
+                await webcam.play();
+                useManualStream = false;
+                currentDeviceId = deviceId;
+                window.requestAnimationFrame(loop);
+                return;
+            } catch (err) {
+                // fallback to native getUserMedia
+                console.warn('tmPose.Webcam.setup with deviceId failed, falling back to getUserMedia', err);
+            }
+
+            // Fallback: request native media stream and assign to hidden video element
+            const constraints = { video: { deviceId: { exact: deviceId } } };
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            if (!manualVideo) {
+                manualVideo = document.createElement('video');
+                manualVideo.autoplay = true;
+                manualVideo.muted = true;
+                manualVideo.playsInline = true;
+                manualVideo.style.display = 'none';
+                document.body.appendChild(manualVideo);
+            }
+            // stop any previous stream then set new
+            stopManualStream();
+            manualVideo.srcObject = stream;
+            try { await manualVideo.play(); } catch (e) {}
+            useManualStream = true;
+            currentDeviceId = deviceId;
+            // continue the loop (loop checks useManualStream)
+            window.requestAnimationFrame(loop);
+        } catch (e) {
+            alert('Could not switch camera: ' + e.message);
+            console.error(e);
+        }
+    }
+
+    // Flip to the next available camera in the list
+    async function flipToNext() {
+        if (!availableVideoDevices || availableVideoDevices.length === 0) return;
+        const select = document.getElementById('cameraSelect');
+        const currentIndex = availableVideoDevices.findIndex(d => d.deviceId === (select.value || currentDeviceId));
+        const nextIndex = (currentIndex + 1) % availableVideoDevices.length;
+        select.selectedIndex = nextIndex;
+        await switchCamera(availableVideoDevices[nextIndex].deviceId);
+    }
+
     async function loop(timestamp) {
-        webcam.update(); // update the webcam frame
+        if (!useManualStream && webcam && webcam.update) webcam.update(); // update the webcam frame
         await predict();
         window.requestAnimationFrame(loop);
     }
@@ -182,7 +341,8 @@
     async function predict() {
         // Prediction #1: run input through posenet
         // estimatePose can take in an image, video or canvas html element
-        const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+        const inputSource = useManualStream && manualVideo ? manualVideo : webcam.canvas;
+        const { pose, posenetOutput } = await model.estimatePose(inputSource);
         // Prediction 2: run input through teachable machine classification model
         const prediction = await model.predict(posenetOutput);
         labelContainer.childNodes[0].innerHTML = "";
@@ -222,8 +382,9 @@
     }
     function drawPose(pose) {
         if (webcam.canvas) {
-            // Draw the webcam output into our (possibly high-DPI) canvas
-            ctx.drawImage(webcam.canvas, 0, 0, canvas.width, canvas.height);
+            // Draw the webcam or manual video output into our (possibly high-DPI) canvas
+            const src = useManualStream && manualVideo ? manualVideo : webcam.canvas;
+            ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
             // draw the keypoints and skeleton
             if (pose) {
                 const minPartConfidence = 0.5;
