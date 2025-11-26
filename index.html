@@ -100,12 +100,17 @@
                 <div style="display:flex; flex-direction:column; gap:16px; align-items:center;">
                     <button id="startBtn" class="big-button" type="button" onclick="init()" style="background-color: lightblue">Start</button>
                     <div style="text-align:center; width:100%;">
-                        <label for="cameraSelect" style="font-size:20px; margin-right:8px; display:block; margin-bottom:6px;">Camera:</label> 
+                        <label for="cameraSelect" style="font-size:18px; display:block; margin-bottom:6px;">Camera:</label>
                         <div style="display:flex; justify-content:center; gap:8px; align-items:center;">
-                            <select id="cameraSelect" style="font-size:18px; min-width:180px;"></select>
-                            <!--<button id="flipBtn" class="big-button" type="button" onclick="flipToNext()" style="background-color: lightcoral;">Flip</button>-->
+                            <select id="cameraSelect" style="font-size:16px; min-width:180px;"></select>
+                            <button id="flipBtn" class="big-button" type="button" onclick="flipToNext()" style="background-color: lightcoral;">Flip</button>
                         </div>
                     </div>
+                    <div style="display:flex; justify-content:center; gap:12px; align-items:center; margin-top:8px;">
+                        <input type="checkbox" id="showRawCheckbox" />
+                        <label for="showRawCheckbox" style="font-size:14px;">Show raw video</label>
+                    </div>
+                    <div id="switchStatus" style="text-align:center; margin-top:8px; font-size:14px; color:#333;"></div>
                     
                 </div>
             </td>
@@ -138,6 +143,7 @@
     // For fallback when tmPose.Webcam.setup with deviceId constraints fails
     let manualVideo = null;
     let useManualStream = false;
+    const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 0);
 
     async function init() {
         //alert ('init');
@@ -180,16 +186,33 @@
             return;
         }
 
-        // create hidden fallback video element (used for manual getUserMedia fallback)
+        // create fallback video element (used for manual getUserMedia fallback)
         manualVideo = document.createElement('video');
         manualVideo.autoplay = true;
         manualVideo.muted = true;
         manualVideo.playsInline = true;
         manualVideo.style.display = 'none';
-        document.body.appendChild(manualVideo);
+        manualVideo.style.width = '100%';
+        manualVideo.style.maxWidth = '640px';
+        // append the raw video into the right-column content so it lines up with canvas
+        const rightContent = document.querySelector('.right-column .content');
+        if (rightContent) rightContent.appendChild(manualVideo); else document.body.appendChild(manualVideo);
 
         // populate camera list after permission granted
         await populateCameraList();
+
+        // If on mobile prefer the back camera by default
+        try {
+            const select = document.getElementById('cameraSelect');
+            if (isMobile && select) {
+                // choose facing:environment by default for mobile
+                const hasFacingEnv = Array.from(select.options).some(o => o.value === 'facing:environment');
+                if (hasFacingEnv) {
+                    select.value = 'facing:environment';
+                    await switchCamera(select.value);
+                }
+            }
+        } catch (e) { console.warn('auto facing selection failed', e); }
 
         // append/get elements to the DOM
         const canvas = document.getElementById("canvas");
@@ -220,6 +243,20 @@
         const pDiv = document.createElement("div");
         pDiv.id = "myNewDiv";
         labelContainer.appendChild(pDiv);
+        // wire up show raw checkbox
+        const rawCheckbox = document.getElementById('showRawCheckbox');
+        if (rawCheckbox) {
+            rawCheckbox.onchange = () => {
+                if (!manualVideo) return;
+                manualVideo.style.display = rawCheckbox.checked ? 'block' : 'none';
+            };
+        }
+        // status element helper
+        function setSwitchStatus(msg) {
+            const el = document.getElementById('switchStatus');
+            if (el) el.textContent = msg || '';
+        }
+        window.setSwitchStatus = setSwitchStatus;
         //for (let i = 0; i < maxPredictions; i++) { // and class labels
         //    labelContainer.appendChild(document.createElement("div"));
         //}
@@ -232,6 +269,18 @@
             availableVideoDevices = devices.filter(d => d.kind === 'videoinput');
             const select = document.getElementById('cameraSelect');
             select.innerHTML = '';
+
+            // Add facingMode options first (useful on mobile where deviceId may not be stable)
+            const facingEnv = document.createElement('option');
+            facingEnv.value = 'facing:environment';
+            facingEnv.text = 'Back camera (environment)';
+            select.appendChild(facingEnv);
+            const facingUser = document.createElement('option');
+            facingUser.value = 'facing:user';
+            facingUser.text = 'Front camera (user)';
+            select.appendChild(facingUser);
+
+            // Add physical deviceId entries (if available)
             availableVideoDevices.forEach((device, idx) => {
                 const option = document.createElement('option');
                 option.value = device.deviceId;
@@ -282,23 +331,84 @@
                 try { webcam.stop(); } catch (e) {}
             }
             stopManualStream();
+            // If deviceId is a facing mode directive (facing:environment or facing:user),
+            // prefer getUserMedia with facingMode which works better on many phones.
+            if (deviceId && deviceId.startsWith('facing:')) {
+                const facing = deviceId.split(':')[1];
+                const statusMsg = document.getElementById('switchStatus');
+                if (statusMsg) statusMsg.textContent = 'Switching camera...';
+                let constraints = { video: { facingMode: { exact: facing } } };
+                // Some browsers reject exact; try ideal if exact fails
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    if (!manualVideo) {
+                        manualVideo = document.createElement('video');
+                        manualVideo.autoplay = true;
+                        manualVideo.muted = true;
+                        manualVideo.playsInline = true;
+                        manualVideo.style.display = 'none';
+                        const rightContent = document.querySelector('.right-column .content');
+                        if (rightContent) rightContent.appendChild(manualVideo); else document.body.appendChild(manualVideo);
+                    }
+                    // stop any previous manual stream
+                    try { if (manualVideo && manualVideo.srcObject) { manualVideo.srcObject.getTracks().forEach(t=>t.stop()); } } catch(e){}
+                    manualVideo.srcObject = stream;
+                    try { await manualVideo.play(); } catch (e) {}
+                    useManualStream = true;
+                    currentDeviceId = deviceId;
+                    if (statusMsg) statusMsg.textContent = '';
+                    window.requestAnimationFrame(loop);
+                    return;
+                } catch (errExact) {
+                    // try with ideal instead
+                    try {
+                        constraints = { video: { facingMode: { ideal: facing } } };
+                        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                        if (!manualVideo) {
+                            manualVideo = document.createElement('video');
+                            manualVideo.autoplay = true;
+                            manualVideo.muted = true;
+                            manualVideo.playsInline = true;
+                            manualVideo.style.display = 'none';
+                            const rightContent = document.querySelector('.right-column .content');
+                            if (rightContent) rightContent.appendChild(manualVideo); else document.body.appendChild(manualVideo);
+                        }
+                        try { if (manualVideo && manualVideo.srcObject) { manualVideo.srcObject.getTracks().forEach(t=>t.stop()); } } catch(e){}
+                        manualVideo.srcObject = stream;
+                        try { await manualVideo.play(); } catch (e) {}
+                        useManualStream = true;
+                        currentDeviceId = deviceId;
+                        if (statusMsg) statusMsg.textContent = '';
+                        window.requestAnimationFrame(loop);
+                        return;
+                    } catch (errIdeal) {
+                        console.warn('facingMode getUserMedia failed', errExact, errIdeal);
+                        if (statusMsg) statusMsg.textContent = '';
+                        // fall through to try deviceId based switching below
+                    }
+                }
+            }
 
-            // try to setup tmPose.Webcam with an exact deviceId constraint
-            webcam = new tmPose.Webcam(actualSizeGlobal, actualSizeGlobal, flipGlobal);
+            // try to setup tmPose.Webcam with an exact deviceId constraint (desktop/browsers that support it)
             try {
+                const statusMsg = document.getElementById('switchStatus');
+                if (statusMsg) statusMsg.textContent = 'Switching camera...';
+                webcam = new tmPose.Webcam(actualSizeGlobal, actualSizeGlobal, flipGlobal);
                 await webcam.setup({ video: { deviceId: { exact: deviceId } } });
                 await webcam.play();
                 useManualStream = false;
                 currentDeviceId = deviceId;
+                if (statusMsg) statusMsg.textContent = '';
                 window.requestAnimationFrame(loop);
                 return;
             } catch (err) {
-                // fallback to native getUserMedia
                 console.warn('tmPose.Webcam.setup with deviceId failed, falling back to getUserMedia', err);
             }
 
-            // Fallback: request native media stream and assign to hidden video element
+            // Fallback: request native media stream by deviceId and assign to hidden video element
             const constraints = { video: { deviceId: { exact: deviceId } } };
+            const statusMsg = document.getElementById('switchStatus');
+            if (statusMsg) statusMsg.textContent = 'Switching camera...';
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
             if (!manualVideo) {
                 manualVideo = document.createElement('video');
@@ -306,7 +416,8 @@
                 manualVideo.muted = true;
                 manualVideo.playsInline = true;
                 manualVideo.style.display = 'none';
-                document.body.appendChild(manualVideo);
+                const rightContent = document.querySelector('.right-column .content');
+                if (rightContent) rightContent.appendChild(manualVideo); else document.body.appendChild(manualVideo);
             }
             // stop any previous stream then set new
             stopManualStream();
@@ -314,6 +425,7 @@
             try { await manualVideo.play(); } catch (e) {}
             useManualStream = true;
             currentDeviceId = deviceId;
+            if (statusMsg) statusMsg.textContent = '';
             // continue the loop (loop checks useManualStream)
             window.requestAnimationFrame(loop);
         } catch (e) {
