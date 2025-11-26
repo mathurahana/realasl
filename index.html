@@ -107,16 +107,16 @@
     let model, webcam, ctx, labelContainer, maxPredictions;
 
     async function init() {
-        alert ('init');
+        //alert ('init');
         const modelURL = URL + "model.json";
         const metadataURL = URL + "metadata.json";
 
         // load the model and metadata
         // Refer to tmImage.loadFromFiles() in the API to support files from a file picker
         // Note: the pose library adds a tmPose object to your window (window.tmPose)
-        alert ('loading the model');
+        //alert ('loading the model');
         model = await tmPose.load(modelURL, metadataURL);
-        alert ('getting max predictions');
+        //alert ('getting max predictions');
         maxPredictions = model.getTotalClasses();
         
         // Convenience function to setup a webcam
@@ -233,4 +233,5 @@
         }
     }
 </script>
+
 
