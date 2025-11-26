@@ -1,1 +1,1 @@
-
+{"tfjsVersion":"1.7.4","tmVersion":"0.8.6","packageVersion":"0.8.6","packageName":"@teachablemachine/pose","timeStamp":"2025-11-25T22:19:25.224Z","userMetadata":{},"modelName":"ASL Pose model","labels":["Hello","Thank You","Where","Me","Say Something","Help","Stop","Bathroom","Yes","No","Whats the time","Say"],"modelSettings":{"posenet":{"architecture":"MobileNetV1","outputStride":16,"inputResolution":257,"multiplier":0.75}}}
