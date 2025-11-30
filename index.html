@@ -386,7 +386,7 @@
                         console.warn('facingMode getUserMedia failed', errExact, errIdeal);
                         if (statusMsg) statusMsg.textContent = '';
                         // fall through to try deviceId based switching below
-                    }
+                    } 
                 }
             }
 
@@ -459,10 +459,14 @@
         // Prediction 2: run input through teachable machine classification model
         const prediction = await model.predict(posenetOutput);
         labelContainer.childNodes[0].innerHTML = "";
+        
         for (let i = 0; i < maxPredictions; i++) {
-            if (prediction[i].probability.toFixed(2) > accuracyPercent / 100) {
-                const classPrediction = prediction[i].className + ": " + prediction[i].probability.toFixed(2);
-                labelContainer.childNodes[0].innerHTML = classPrediction;
+            var classPrediction = classPrediction = prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+
+            if (prediction[i].probability.toFixed(2) >= accuracyPercent / 100) 
+            {
+                // classPrediction = prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+                
                 //labelContainer.childNodes[0].innerHTML = prediction[i].className;
 
                 //Only add to the message text when it is not the same as the last prediction
@@ -475,8 +479,11 @@
                     
                     lastPrediction = prediction[i].className;
                 }
-            } else {
+            } 
+            else //lower than accuracy probability prediction
+            {
                 //labelContainer.childNodes[0].innerHTML = "Can you please say that again?";
+                labelContainer.childNodes[0].innerHTML = classPrediction;
             }
 
             //show all predictions
